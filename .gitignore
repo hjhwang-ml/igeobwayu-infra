@@ -1,0 +1,8 @@
+# 비밀번호·토큰이 들어가는 실제 설정 파일은 올리지 않음
+config.ini
+*.env
+# 덤프·원본 데이터
+*.sql
+*.sql.gz
+*.bson.gz
+raw/
