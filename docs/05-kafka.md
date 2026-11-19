@@ -1,6 +1,6 @@
-# 5. 카프카 서버 — kafka (.111)
+# 5. 카프카 서버 — kafka
 
-수집·정제·적재 파이프라인을 전부 이 서버에서 돌립니다. WAS에는 Flask만 있습니다.
+수집·정제·적재 파이프라인
 
 ```
 collect.py (수집, Producer)
@@ -12,15 +12,9 @@ collect.py (수집, Producer)
                                                 → MongoDB ott_service.media_contents
 ```
 
-**왜 카프카인가 (발표 포인트):** 실시간이 목적이 아니라 **DB가 죽어도 데이터가 안 사라지는 것**.
-- 수집은 원본 JSON 파일을 먼저 저장하고, 그다음 토픽에 보냅니다. 카프카가 죽어 있어도 수집은 계속되고 원본은 남습니다.
-- 적재 컨슈머는 **DB 커밋이 끝난 뒤에만 오프셋을 커밋**합니다. MariaDB가 죽어 있으면 커밋하지 않고 30초마다 같은 메시지부터 다시 시도하고, DB가 살아나면 멈춘 곳부터 이어서 넣습니다.
-- 같은 메시지를 두 번 받아도 결과가 같습니다 (MariaDB `INSERT IGNORE`, MongoDB `_id` 기준 ReplaceOne upsert).
-- MongoDB 쓰기는 Kafka Connect의 MongoDB Sink 커넥터가 맡습니다. 몽고 Primary가 바뀌어도 커넥터가 새 Primary를 찾아 이어서 씁니다.
+
 
 ## 5-1. VM·자바
-
-Rocky 10, 2 vCPU, 메모리 **1.7GB**(실제 값), 디스크 20GB. 메모리가 작아서 브로커 힙 512MB, Connect 힙 256MB로 줄였습니다.
 
 ```bash
 hostnamectl set-hostname kafka
@@ -38,7 +32,7 @@ id kafka >/dev/null 2>&1 || useradd -r -s /sbin/nologin kafka
 mkdir -p /data/kafka-logs
 ```
 
-## 5-3. 설정 `/opt/kafka/config/server.properties` (단일 노드 KRaft)
+## 5-3. 설정 `/opt/kafka/config/server.properties`
 
 ZooKeeper 없이 한 프로세스가 브로커와 컨트롤러를 같이 합니다.
 
@@ -63,7 +57,7 @@ bin/kafka-storage.sh format --standalone -t $(bin/kafka-storage.sh random-uuid) 
 chown -R kafka: /data/kafka-logs /opt/kafka_2.13-4.4.0
 ```
 
-`already formatted`가 나오면 이미 된 것이니 넘어갑니다. **돌고 있는 서버에서 다시 포맷하지 말 것** (메시지가 전부 사라짐).
+`already formatted`가 나오면 이미 된 것이니 넘어갑니다.
 
 ## 5-4. 서비스
 
@@ -96,7 +90,7 @@ systemctl status kafka --no-pager | head -5
 ss -lntp | grep -E '9092|9093'
 ```
 
-방화벽: 프로듀서·컨슈머·Connect가 전부 이 서버 안에 있어서 9092·8083은 **열지 않습니다**. (다른 서버에서 붙여야 하면 그 IP만 rich-rule로 허용)
+방화벽: 프로듀서·컨슈머·Connect가 전부 이 서버 안에 있어서 9092·8083은 **열지 않습니다**.
 
 ## 5-5. 토픽
 
@@ -118,9 +112,6 @@ bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
 | `ott.maria.loaded` | load_maria.py → load_mongo.py | 정형 적재 완료 신호 `{content_id}` |
 | `ott.mongo.docs` | load_mongo.py → mongo-sink | 완성된 MongoDB 문서 (Mongo 확장 JSON, 날짜는 `{"$date": ...}`) |
 
-- 예전에는 영어 리뷰를 따로 받아 `ott.reviews` 토픽으로 보냈지만, 지금은 원본 하나(`reviews_en`)에 들어가 `ott.content`로 갑니다. 11/15에 `load_mongo.py` 구독에서 빼고 **토픽을 삭제**했습니다.
-- 목록에 보이는 나머지 토픽은 카프카가 쓰는 것입니다: `__consumer_offsets`(컨슈머 그룹별 오프셋 = 어디까지 처리했는지), `connect-configs`·`connect-offsets`·`connect-status`(Kafka Connect의 커넥터 설정·진행 위치·상태)
-- 몽고 적재가 MariaDB 뒤에 오는 이유: 몽고 문서의 배역 이름이 MariaDB `CAST_CREDIT_ID`를 참조합니다.
 
 ## 5-6. 파이프라인 배치
 
@@ -173,18 +164,17 @@ bootstrap = 192.168.56.111:9092
 
 [collect]
 raw_dir = /opt/ott-was/raw
-batch = 30                        ; 라운드당 신작 수
-max_total = 10000                 ; 전체 상한 (선생님 기준 만 건 이하)
-rest_sec = 86400                  ; 라운드 사이 → 사실상 하루 한 번
-idle_sec = 3600                   ; 새 작품이 없을 때 쉬는 시간
-providers_hour = 23               ; OTT 제공 현황 받는 시각
+batch = 30                       
+max_total = 10000                 
+rest_sec = 86400                
+idle_sec = 3600                   
+providers_hour = 23            
 ```
 
-수집 루프는 쉬는 중에도 23시를 놓치지 않게 깨어나서, **매일 23시에 신작 30편 + 전체 작품 OTT 현황**을 받습니다.
 
 ## 5-7. 파이프라인 서비스 3개
 
-로그는 journal이 아니라 `/var/log/ott_*.log` 파일로 남깁니다. ※ 확인: `pipeline/systemd/` 원본과 같은지
+로그는 journal이 아니라 `/var/log/ott_*.log` 파일로 남깁니다.
 
 ```bash
 cat > /etc/systemd/system/ott-collect.service <<'EOF'
@@ -249,33 +239,29 @@ tail -f /var/log/ott_load_maria.log        # "구독 시작", "MariaDB 연결" �
 | `ott-load-mongo` | `ott-mongo-loader` | ott.maria.loaded |
 | `ott-connect` (mongo-sink) | `connect-mongo-sink` | ott.mongo.docs |
 
-**주의:** 컨슈머가 떠 있을 때 파일 모드(`load_maria.py` 옵션 없이)를 같이 돌리지 않습니다. 출연·제작진 ID가 겹칩니다. 파일 모드로 재구축할 때는 `systemctl stop ott-load-maria ott-load-mongo` 먼저.
 
 ## 5-8. Kafka Connect + MongoDB Sink (11/15 추가)
 
-몽고에 **쓰는 일**은 Connect가, **문서를 만드는(정제) 일**은 파이썬이 하도록 나눴습니다.
 
 ```
 [바꾸기 전] ott.maria.loaded → load_mongo.py(정제 + 몽고 쓰기) → MongoDB
 [바꾼 뒤]   ott.maria.loaded → load_mongo.py(정제만) → ott.mongo.docs → mongo-sink → MongoDB
 ```
 
-`load_mongo.py` 카프카 모드는 문서를 `bson.json_util`의 확장 JSON으로 바꿔 `ott.mongo.docs`에 보냅니다 (key = CONTENT_ID). 그냥 JSON으로 보내면 `collected_at`·`updated_at`이 문자열이 되므로, `{"$date": ...}` 형식으로 보내서 몽고에 **Date 타입** 그대로 들어가게 했습니다.
 
 ```python
 publish(T_DOCS, str(cid), json.loads(json_util.dumps(doc)), must=True)   # 도착 확인 후 다음 메시지
 ```
 
-- 몽고가 죽어 있어도 정제는 계속되고, 문서는 토픽에 쌓였다가 몽고가 살아나면 커넥터가 넣습니다.
-- 몽고에 직접 쓰는 건 파일 모드(`--rebuild`, `--all`, 옵션 없음)뿐입니다.
 
-> **영어 리뷰 주의 (11/15 확인):** 서버의 `build()`는 영어 리뷰를 `raw/reviews/{key}.json` 파일에서만 읽습니다. 지금 수집은 영어 리뷰를 **원본 안의 `reviews_en`**에 넣고 `raw/reviews/` 파일은 만들지 않으므로, 이대로면 새 작품 문서에 영어 리뷰가 빠집니다. `build()` 첫 줄에 아래 두 줄을 넣어 원본 안의 값을 쓰게 합니다.
+
+
 > ```python
 >     if en_reviews is None:                                   # 예전 raw/reviews/ 파일이 없으면 원본 안의 영어 리뷰
 >         en_reviews = (d.get("reviews_en") or {}).get("results")
 > ```
 >
-> 11/15 적용 후, 이미 들어간 문서 중 영어 리뷰가 빠진 작품만 `ott.maria.loaded`로 다시 보내 문서를 다시 만들었습니다 (서비스 중단 없음, Connect가 `_id` 기준으로 덮어씀). 결과: 영어 리뷰가 실제로 있는 작품 3,731편 전부 반영 (1,502편 → 3,731편). 예전 방식이 리뷰가 없는 작품에도 빈 `raw/reviews/` 파일을 만들어 둔 898편은 원래 리뷰가 없는 작품.
+
 > ```bash
 > cd /opt/ott-was/pipeline && python3 - <<'EOF'
 > import sys; sys.path.insert(0, ".")
@@ -292,7 +278,7 @@ publish(T_DOCS, str(cid), json.loads(json_util.dumps(doc)), must=True)   # 도�
 > print(f"ott.maria.loaded 로 {len(todo):,}건 보냄")
 > EOF
 > ```
-> 이 방법은 "문서 규칙을 바꿨을 때 몽고만 다시 만들기"에 그대로 쓸 수 있습니다 (`--all`과 달리 컨슈머를 멈추지 않아도 됨).
+
 
 ### 1) 커넥터 jar
 
@@ -364,10 +350,6 @@ sleep 5
 curl -s localhost:8083/connectors/mongo-sink/status; echo     # "state":"RUNNING" 이 두 번 (커넥터, 태스크)
 ```
 
-- `ProvidedInValueStrategy`: 문서 안의 `_id`(= CONTENT_ID)를 그대로 씀
-- `ReplaceOneDefaultStrategy`: `_id`로 찾아 통째로 바꾸고 없으면 넣음 (upsert) → 같은 메시지가 두 번 와도 결과가 같음
-- 몽고가 오래 죽어 있으면 재시도를 다 쓰고 태스크가 `FAILED`가 될 수 있습니다. 몽고를 살린 뒤 재시작:
-  `curl -X POST "localhost:8083/connectors/mongo-sink/restart?includeTasks=true"`
 
 ## 5-9. 확인 명령
 
@@ -385,7 +367,6 @@ free -m                                   # 메모리 여유 확인 (1.7GB VM)
 
 ## 5-10. 카프카가 죽었을 때 (파일 모드)
 
-수집은 원본 파일을 먼저 저장하므로 데이터는 `raw/`에 남아 있습니다. 카프카를 살릴 수 없으면 컨슈머를 멈추고 파일 모드로 적재합니다.
 
 ```bash
 systemctl stop ott-load-maria ott-load-mongo
